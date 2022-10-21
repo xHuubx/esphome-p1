@@ -1,0 +1,153 @@
+substitutions:
+  device_name: s0-dongle
+  device_description: "S0 module to read S0 interfaces (pulse counters)"
+  friendly_name: S0-Dongle
+  p_version: "2022.6.1"
+
+esphome:
+  name: ${device_name}
+  comment: "${device_description}" 
+  name_add_mac_suffix: false
+  project:
+    name: smartstuff.s0-dongle
+    version: ${p_version}
+  
+esp8266:
+  board: esp12e
+  restore_from_flash: true
+
+status_led:
+  pin:
+    number: 2
+    inverted: true
+
+ota:
+
+wifi:
+#  ssid: !secret wifi_ssid
+#  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: ${device_name}
+    ap_timeout: 15s
+    
+dashboard_import:
+  package_import_url: github://mhendriks/esphome-p1/s0-dongle.yaml
+  
+captive_portal:
+
+web_server:
+  port: 80
+  
+# Enable logging
+logger:
+  level: DEBUG
+  esp8266_store_log_strings_in_flash: False
+
+api:
+#via Home Assistant Ontwikkelhulpmiddelen > services zoeken op esphome.watermeter_set_water_reading en via deze methode de juiste beginstand invoeren
+  services:
+    - service: s0_reset_total_energy
+      then:
+        - button.press:
+            id: button_reset_total
+    - service: s0_set_total_energy
+      variables:
+        s0_value: int
+      then:
+        - pulse_meter.set_total_pulses:
+            id: pulse
+            value: !lambda 'return s0_value;'
+
+globals:
+  - id: tot_count
+    type: float
+    restore_value: no  # aanpassen naar no indien de nieuwe waarde onder de oude ligt
+    initial_value: '0'   # beginstand  -> aanpassen via Home Assistant services
+  - id: pulse_rate
+    type: int
+    restore_value: no  # aanpassen naar no indien de nieuwe waarde onder de oude ligt
+    initial_value: '1000'   # pulse rate van de kWh meter -> xxx pulses / kWh
+            
+button:  
+  - platform: restart
+    name: "Restart device"  
+  - platform: template
+    name: "Reset - Total Energy"
+    id: button_reset_total
+    on_press:
+      - pulse_meter.set_total_pulses:
+          id: pulse
+          value: 0    
+            
+sensor:
+  - platform: pulse_meter
+    pin: 
+      number: 5
+      mode:
+        input: true
+        pullup: true #v3.5 aanzetten
+    id: pulse
+    state_class: measurement
+    unit_of_measurement: 'W'
+    device_class: power
+    icon: mdi:flash-outline
+    filters:
+      #- multiply: 0.06 # (60s/1000 pulses per kWh)
+      - lambda: return x * ((60.0 / id(pulse_rate)) * 1000.0);
+    total:
+      name: "S0 Total Energy"
+      id: pulse_tot
+      unit_of_measurement: "kWh"
+      icon: mdi:circle-slice-3
+      state_class: total_increasing
+      device_class: energy
+      accuracy_decimals: 3
+      filters:
+        - lambda: return x * (1.0 / id(pulse_rate));
+
+  - platform: uptime
+    name: "Uptime"
+
+  - platform: total_daily_energy
+    name: 'S0 Daily Energy'
+    id:   
+    power_id: pulse
+    unit_of_measurement: 'kWh'
+    icon: mdi:circle-slice-3
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 3
+    filters:
+      # Multiplication factor from W to kW is 0.001
+      - multiply: 0.001
+
+# Enable time component to reset energy at midnight
+# https://esphome.io/components/time.html#home-assistant-time-source
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: IP-adres
+      icon: mdi:ip-network
+    ssid:
+      name: Netwerk
+      icon: mdi:access-point-network
+    mac_address:
+      name: Mac-adres
+      icon: mdi:folder-key-network-outline
+      
+  - platform: template
+    name: "S0 Version"
+    icon: "mdi:label-outline"
+    update_interval: 6h
+    lambda: return {"$p_version"};
+      
+  - platform: version
+    name: "ESPHome Version"
+    hide_timestamp: true
+
